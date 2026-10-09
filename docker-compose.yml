@@ -1,0 +1,92 @@
+# Start the whole system with:  docker compose up --build
+# All configuration comes from environment variables (12-factor III); see .env.example.
+name: maltashop
+
+x-service-defaults: &service-defaults
+  restart: unless-stopped
+  depends_on:
+    rabbitmq:
+      condition: service_healthy
+  environment: &common-env
+    RABBITMQ_URL: amqp://${RABBITMQ_USER:-maltashop}:${RABBITMQ_PASS:-maltashop_dev}@rabbitmq:5672
+
+services:
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-maltashop}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-maltashop_dev}
+    ports:
+      - "5672:5672"
+      - "15672:15672"        # management UI: http://localhost:15672
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+
+  order-service:
+    <<: *service-defaults
+    build: ./services/order-service
+    image: ${IMAGE_PREFIX:-maltashop}/order-service:${TAG:-dev}
+    ports:
+      - "3001:3001"
+    environment:
+      <<: *common-env
+      SERVICE_NAME: order-service
+      PORT: "3001"
+      DB_PATH: /data/orders.db
+    volumes:
+      - order-data:/data      # this volume is the Order service's private data store
+
+  inventory-service:
+    <<: *service-defaults
+    build: ./services/inventory-service
+    image: ${IMAGE_PREFIX:-maltashop}/inventory-service:${TAG:-dev}
+    ports:
+      - "3002:3002"
+    environment:
+      <<: *common-env
+      SERVICE_NAME: inventory-service
+      PORT: "3002"
+      DB_PATH: /data/inventory.db
+    volumes:
+      - inventory-data:/data
+
+  payment-service:
+    <<: *service-defaults
+    build: ./services/payment-service
+    image: ${IMAGE_PREFIX:-maltashop}/payment-service:${TAG:-dev}
+    ports:
+      - "3003:3003"
+    environment:
+      <<: *common-env
+      SERVICE_NAME: payment-service
+      PORT: "3003"
+      DB_PATH: /data/payments.db
+    volumes:
+      - payment-data:/data
+
+  notification-service:
+    <<: *service-defaults
+    build: ./services/notification-service
+    image: ${IMAGE_PREFIX:-maltashop}/notification-service:${TAG:-dev}
+    ports:
+      - "3004:3004"
+    environment:
+      <<: *common-env
+      SERVICE_NAME: notification-service
+      PORT: "3004"
+      DB_PATH: /data/notifications.db
+    volumes:
+      - notification-data:/data
+
+volumes:
+  rabbitmq-data:
+  order-data:
+  inventory-data:
+  payment-data:
+  notification-data:
