@@ -1,0 +1,32 @@
+# Sample canary for report 3.3 using plain Kubernetes: two Deployments behind one Service.
+# 1 canary pod out of 10 receives ~10% of traffic. Rollback = scale the canary to 0 (seconds).
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: payment-stable }
+spec:
+  replicas: 9
+  selector: { matchLabels: { app: payment, track: stable } }
+  template:
+    metadata: { labels: { app: payment, track: stable } }
+    spec:
+      containers:
+        - { name: payment, image: ghcr.io/OWNER/maltashop/payment-service:OLD_SHA, ports: [{ containerPort: 3003 }] }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: payment-canary }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: payment, track: canary } }
+  template:
+    metadata: { labels: { app: payment, track: canary } }
+    spec:
+      containers:
+        - { name: payment, image: ghcr.io/OWNER/maltashop/payment-service:NEW_SHA, ports: [{ containerPort: 3003 }] }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: payment }
+spec:
+  selector: { app: payment }        # matches both tracks
+  ports: [{ port: 80, targetPort: 3003 }]

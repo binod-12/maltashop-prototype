@@ -1,0 +1,54 @@
+# Sample manifest for report section 4.1. Shows Deployment/ReplicaSet, probes, requests/limits, HPA.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-service
+  labels: { app: order-service }
+spec:
+  replicas: 3                       # a ReplicaSet keeps 3 pods alive; losing one never takes checkout down
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxUnavailable: 0, maxSurge: 1 }   # zero planned downtime
+  selector:
+    matchLabels: { app: order-service }
+  template:
+    metadata:
+      labels: { app: order-service }
+    spec:
+      containers:
+        - name: order-service
+          image: ghcr.io/OWNER/maltashop/order-service:SHA   # same image that passed CI
+          ports: [{ containerPort: 3001 }]
+          env:
+            - { name: SERVICE_NAME, value: order-service }
+            - { name: PORT, value: "3001" }
+            - name: RABBITMQ_URL
+              valueFrom: { secretKeyRef: { name: rabbitmq-credentials, key: url } }
+          livenessProbe:            # restart the pod if the process is wedged
+            httpGet: { path: /health, port: 3001 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:           # only send traffic once the broker connection is up
+            httpGet: { path: /ready, port: 3001 }
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 200m, memory: 128Mi }   # scheduler guarantee
+            limits:   { cpu: 500m, memory: 256Mi }   # a leak is killed at the limit, not the whole node
+---
+apiVersion: v1
+kind: Service
+metadata: { name: order-service }
+spec:
+  selector: { app: order-service }
+  ports: [{ port: 80, targetPort: 3001 }]
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata: { name: order-service }
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: order-service }
+  minReplicas: 3
+  maxReplicas: 30                   # headroom for the 10x sale peak
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: 60 } }
