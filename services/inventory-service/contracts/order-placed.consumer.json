@@ -1,0 +1,23 @@
+{
+  "$comment": "Consumer-driven contract: what the Inventory service REQUIRES from the order.placed event. The Order service's CI must keep satisfying this file.",
+  "type": "object",
+  "required": ["orderId", "customerId", "items", "amount", "paymentToken"],
+  "properties": {
+    "orderId": { "type": "string", "minLength": 1 },
+    "customerId": { "type": "string", "minLength": 1 },
+    "amount": { "type": "number", "minimum": 0.01 },
+    "paymentToken": { "type": "string", "minLength": 1 },
+    "items": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["sku", "qty"],
+        "properties": {
+          "sku": { "type": "string", "minLength": 1 },
+          "qty": { "type": "integer", "minimum": 1 }
+        }
+      }
+    }
+  }
+}
