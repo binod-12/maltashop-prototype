@@ -1,25 +1,29 @@
-# ---- Stage 1: install production dependencies only (reproducible via package-lock.json) ----
-FROM node:22-alpine AS deps
+# ---- Stage 1: build a virtualenv with production dependencies only ----
+FROM python:3.12-slim AS deps
 WORKDIR /app
-COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
 
-# ---- Stage 2: small runtime image, no build tools, runs as the non-root "node" user ----
-FROM node:22-alpine
-ENV NODE_ENV=production \
+# ---- Stage 2: small runtime image, no build tools, runs as an unprivileged user ----
+FROM python:3.12-slim
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PATH="/opt/venv/bin:$PATH" \
     SERVICE_NAME=inventory-service \
     PORT=3002 \
     DB_PATH=/data/service.db
 WORKDIR /app
-COPY --from=deps /app/node_modules ./node_modules
-COPY package.json ./
-COPY src ./src
+COPY --from=deps /opt/venv /opt/venv
+COPY app ./app
 COPY contracts ./contracts
+
 # writable data directory owned by the unprivileged user
-RUN mkdir -p /data && chown -R node:node /data /app
-USER node
+RUN useradd --system --uid 10001 appuser && mkdir -p /data && chown -R appuser /data /app
+USER appuser
 EXPOSE 3002
 VOLUME ["/data"]
 HEALTHCHECK --interval=10s --timeout=3s --start-period=15s --retries=5 \
-  CMD node -e "fetch('http://127.0.0.1:'+process.env.PORT+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
-CMD ["node", "src/index.js"]
+  CMD python -c "import os,urllib.request,sys; urllib.request.urlopen('http://127.0.0.1:'+os.environ['PORT']+'/health', timeout=2)" || exit 1
+CMD ["python", "-m", "app.main"]

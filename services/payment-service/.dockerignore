@@ -1,5 +1,8 @@
-node_modules
+tests
+__pycache__
+*.pyc
 data
-npm-debug.log
-test
-.git
+.venv
+.pytest_cache
+requirements-dev.txt
+pytest.ini
