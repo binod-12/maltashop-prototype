@@ -1,6 +1,6 @@
 # MaltaShop – "Place an Order" Prototype
 
-Prototype for **Unit 5: Service-Oriented Architecture and Microservices Fundamentals** (Learn Key Institute, Malta Campus).
+Python 3.12 / FastAPI port. Prototype for **Unit 5: Service-Oriented Architecture and Microservices Fundamentals** (Learn Key Institute, Malta Campus).
 It implements the *place an order* flow of the fictional MaltaShop Ltd platform as four small services that
 communicate through a message broker and keep an order consistent **without a distributed database transaction**
 (a choreography-based saga with compensation).
@@ -32,7 +32,7 @@ for inventory, payment or email.
 
 ## Run it
 
-Prerequisites: Docker Desktop (or Docker Engine) with the Compose plugin. Nothing else is needed.
+Prerequisites: Docker Desktop (or Docker Engine) with the Compose plugin. Nothing else is needed (Python runs inside the containers).
 
 ```bash
 cp .env.example .env          # optional – defaults already work
@@ -82,15 +82,21 @@ All configuration is injected through the environment (12-factor III). Nothing i
 ## Tests
 
 ```bash
-# per service (Node 22.13+)
-cd services/order-service && npm ci && npm test
+# once: create a virtualenv (Python 3.12+)
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r services/order-service/requirements-dev.txt
+
+# per service
+cd services/order-service && python -m pytest && cd ../..
 # contract test: does Order's order.placed still satisfy what Inventory needs?
-node --test "contract-tests/*.test.js"
+python -m pytest contract-tests
+# lint
+ruff check .
 ```
 
 | Level | What | Where |
 |---|---|---|
-| Unit | request validation, stock reservation/compensation, provider rules, templates | `services/*/test` |
+| Unit | request validation, stock reservation/compensation, provider rules, templates | `services/*/tests` |
 | Contract | consumer-driven: Inventory's `contracts/order-placed.consumer.json` vs Order's event builder | `contract-tests/` |
 | Integration / end-to-end | real broker + all services, happy and failure paths | `scripts/smoke-test.sh` (CI job `integration`) |
 
@@ -103,9 +109,9 @@ image **once** (tagged with the commit SHA) → integration test using those exa
 ## Repository layout
 
 ```
-services/<name>-service/   src/, test/, Dockerfile (multi-stage, non-root, HEALTHCHECK), package.json
+services/<name>-service/   app/, tests/, Dockerfile (multi-stage, non-root, HEALTHCHECK), requirements.txt
 contract-tests/            consumer-driven contract test
-scripts/                   smoke-test.sh, replay-duplicate.mjs
+scripts/                   smoke-test.sh, replay_duplicate.py
 k8s/                       sample Kubernetes manifests for the report (not required to run the prototype)
 docs/LAB_GUIDE.md          step-by-step lab instructions and screenshot checklist
 docker-compose.yml         whole system, one command
@@ -115,6 +121,6 @@ docker-compose.yml         whole system, one command
 
 - No transactional outbox: an order is saved and then published; a crash between the two would lose the event.
 - SQLite per service keeps the prototype dependency-free; production would use managed PostgreSQL per service.
-- Code in `src/common` is copied into each service rather than shared as a library, to keep services independently deployable.
+- Code in `app/common` is copied into each service rather than shared as a library, to keep services independently deployable.
 - Authentication, API gateway, rate limiting, tracing and metrics are described in the report but not implemented here.
 - Payment provider is simulated; no real card data is ever handled.

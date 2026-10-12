@@ -95,10 +95,10 @@ Take these while the system is running. Crop to the relevant part and make the t
 | 4 | Event **consumed by the second service** | `docker compose logs inventory-service` showing `received order.placed` / `inventory.reserved` | 6.3 |
 | 5 | **Same correlation ID in both services' logs** | `docker compose logs \| grep <correlationId>` (all four services appear) | 6.3 |
 | 6 | Compensation: order with `tok_fail` → `CANCELLED`, stock restored | `curl localhost:3002/stock` before and after | 6.1 |
-| 7 | Duplicate delivery ignored | `node scripts/replay-duplicate.mjs <orderId> <messageId> <correlationId>` then the `duplicate … ignored` log lines (messageId is in the `event.published` log line for `order.placed`) | 6.1 |
+| 7 | Duplicate delivery ignored | `python scripts/replay_duplicate.py <orderId> <messageId> <correlationId>` then the `duplicate … ignored` log lines (messageId is in the `event.published` log line for `order.placed`) | 6.1 |
 | 8 | RabbitMQ management UI, exchange and queues (http://localhost:15672) | browser | 6.3 |
 | 9 | Passing pipeline run | GitHub Actions page | 3 |
-| 10 | Test output (`npm test`, contract test) | terminal | 3.2 |
+| 10 | Test output (`python -m pytest`, contract test) | terminal | 3.2 |
 
 Useful commands for #5 on Windows PowerShell: `docker compose logs | Select-String <correlationId>`.
 
@@ -109,28 +109,28 @@ Useful commands for #5 on Windows PowerShell: `docker compose logs | Select-Stri
 | Brief item | Evidence in this repo |
 |---|---|
 | 2.1 container diagram, AI Recommendation placement | Draw it yourself (must be your own work). Recommendation would be a separate **subscriber** on the same exchange (`order.placed`, `order.confirmed`, browsing events): publish/subscribe means it never calls or blocks checkout. |
-| 2.2 patterns | Database per service (each `DB_PATH`), publish-subscribe (`src/common/mq.js`), saga (below), API gateway/circuit breaker/strangler fig (discuss; not implemented) |
-| 2.3 12-factor | III config in env (compose, README table), XI logs as stdout events (`src/common/log.js`), VI stateless processes (state only in `/data` volume), IX disposability (`process.exit(1)` on broker loss, `restart: unless-stopped`), X dev/prod parity (same image everywhere) |
+| 2.2 patterns | Database per service (each `DB_PATH`), publish-subscribe (`app/common/mq.py`), saga (below), API gateway/circuit breaker/strangler fig (discuss; not implemented) |
+| 2.3 12-factor | III config in env (compose, README table), XI logs as stdout events (`app/common/log.py`), VI stateless processes (state only in `/data` volume), IX disposability (`os._exit(1)` on broker loss, `restart: unless-stopped`), X dev/prod parity (same image everywhere) |
 | 3.1 CI/CD, build once | `.github/workflows/ci.yml`: image built once, tagged with SHA, the *same* image is integration-tested and pushed |
 | 3.2 test pyramid, contract test | `services/*/test`, `contract-tests/`, `scripts/smoke-test.sh`; contract between **Order** and **Inventory** |
 | 3.3 canary / rollback | `k8s/payment-canary.yaml` |
 | 4.1 Kubernetes | `k8s/order-service.yaml` (Deployment, probes, requests/limits, HPA). Services using `/health` and `/ready` map directly to liveness/readiness probes |
-| 4.2 logging | JSON schema in `src/common/log.js`: `timestamp, level, service, correlationId, event, message` |
+| 4.2 logging | JSON schema in `app/common/log.py`: `timestamp, level, service, correlationId, event, message` |
 | 5.3 ADRs | Message broker (RabbitMQ vs Kafka vs cloud queue) and observability stack: you write these; rationale for RabbitMQ in this repo is durable queues, DLQ, simple ops for a team new to distributed systems |
 | 6.1 saga, compensation, idempotency | See below |
 | 6.2 Dockerfile and Compose | `services/*/Dockerfile`, `docker-compose.yml` |
 
 ### 6.1 – the code to quote (annotated snippets)
 
-- **Choreography saga**: Order publishes `order.placed` (`services/order-service/src/index.js`), Inventory reacts and publishes
+- **Choreography saga**: Order publishes `order.placed` (`services/order-service/app/main.py`), Inventory reacts and publishes
   `inventory.reserved`, Payment reacts and publishes `payment.completed` or `payment.failed`, Order confirms or cancels.
   No service calls another directly and no distributed transaction exists.
-- **Compensating action**: `release()` in `services/inventory-service/src/stock.js`, triggered by `payment.failed`.
-- **Idempotency**: `markProcessed()` in `src/common/db.js`. It inserts `(messageId, handler)` in the *same transaction* as the
+- **Compensating action**: `release()` in `services/inventory-service/app/stock.py`, triggered by `payment.failed`.
+- **Idempotency**: `mark_processed()` in `app/common/db.py`. It inserts `(messageId, handler)` in the *same transaction* as the
   business change, so a redelivery is detected and skipped. The POST endpoint also honours an `Idempotency-Key` header.
 - **Broker features that support it**: durable queues and persistent messages (survive restart), publisher confirms,
   manual acks (a message is only removed after the handler succeeds), a dead-letter exchange for poison messages
-  (`src/common/mq.js`).
+  (`app/common/mq.py`).
 - **Honest limitation to state in 6.3**: saving the order and publishing the event are two steps (no transactional outbox),
   RabbitMQ gives at-least-once delivery so idempotency is mandatory, and payment has no timeout/circuit breaker.
 
@@ -145,7 +145,7 @@ The brief says you may be asked to demonstrate and explain. Be able to answer:
 3. *What if Payment crashes after charging but before publishing?* Redelivery repeats the handler; the unique `order_id` in `payments` and the processed-events table stop a double charge. Strictly, the provider call itself needs an idempotency key too (limitation).
 4. *Where is the correlation ID created?* At the edge (Order's POST or an API gateway header), carried in AMQP `correlationId`, logged by every service.
 5. *Why a separate `/health` and `/ready`?* Liveness restarts a stuck process; readiness removes a pod from traffic when the broker is unreachable, without restarting it.
-6. *Why is the code in `src/common` duplicated?* A shared library would couple release cycles of all services; duplication of 100 lines is the cheaper trade-off at this size.
+6. *Why is the code in `app/common` duplicated?* A shared library would couple release cycles of all services; duplication of 100 lines is the cheaper trade-off at this size.
 7. *Why SQLite?* Keeps the prototype dependency-free while proving database-per-service; production: managed PostgreSQL per service.
 
 Run through `docker compose logs` once so you recognise every line.
@@ -157,8 +157,7 @@ Run through `docker compose logs` once so you recognise every line.
 | Symptom | Fix |
 |---|---|
 | Service restarts with `could not connect to RabbitMQ` | Broker still starting; Compose waits for its health check, but give it 30 s. Check `docker compose logs rabbitmq`. |
-| `npm ci` fails during build | Run `npm install` inside that service folder so `package-lock.json` is current, then rebuild. |
-| `ExperimentalWarning: SQLite` | Harmless: `node:sqlite` is built into Node 22. |
+| `pip install` fails during build | Check the pinned versions in `requirements.txt`; rebuild with `docker compose build --no-cache`. |
 | Port already in use | Change the left side of the port mapping in `docker-compose.yml`, e.g. `"3101:3001"`. |
 | `bash: scripts/smoke-test.sh` not found on Windows | Use Git Bash, or run from WSL. |
 | Smoke test hangs on "did not reach CONFIRMED" | `docker compose logs --tail 50` and look for `event.handler_failed` or `contract violation`. |
