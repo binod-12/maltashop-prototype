@@ -46,7 +46,7 @@ async def connect(retries: int = 30) -> None:
             _connection.close_callbacks.add(_on_close)
             _channel = await _connection.channel(publisher_confirms=True)
             _exchange = await _channel.declare_exchange(EXCHANGE, aio_pika.ExchangeType.TOPIC, durable=True)
-            await _channel.declare_exchange(DLX, aio_pika.ExchangeType.FANOUT, durable=True)
+            await _channel.declare_exchange(DLX, aio_pika.ExchangeType.DIRECT, durable=True)
             info("mq.connected", "connected to RabbitMQ")
             return
         except Exception as exc:  # noqa: BLE001 - any failure means "broker not ready yet"
@@ -80,11 +80,17 @@ async def subscribe(queue_name: str, routing_keys: list[str], handler) -> None:
     channel = await _connection.channel()
     await channel.set_qos(prefetch_count=10)
 
-    dlx = await channel.declare_exchange(DLX, aio_pika.ExchangeType.FANOUT, durable=True)
-    dlq = await channel.declare_queue(f"{queue_name}.dlq", durable=True)
-    await dlq.bind(dlx, routing_key="")
+    # Each queue dead-letters to its OWN .dlq: direct exchange, routing key = the dlq name.
+    dlq_name = f"{queue_name}.dlq"
+    dlx = await channel.declare_exchange(DLX, aio_pika.ExchangeType.DIRECT, durable=True)
+    dlq = await channel.declare_queue(dlq_name, durable=True)
+    await dlq.bind(dlx, routing_key=dlq_name)
 
-    queue = await channel.declare_queue(queue_name, durable=True, arguments={"x-dead-letter-exchange": DLX})
+    queue = await channel.declare_queue(
+        queue_name,
+        durable=True,
+        arguments={"x-dead-letter-exchange": DLX, "x-dead-letter-routing-key": dlq_name},
+    )
     exchange = await channel.declare_exchange(EXCHANGE, aio_pika.ExchangeType.TOPIC, durable=True)
     for key in routing_keys:
         await queue.bind(exchange, routing_key=key)
